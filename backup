@@ -1,0 +1,180 @@
+#!/bin/bash
+function get_env() {
+    local VAR="$1"
+    local VAR_FILE="${VAR}_FILE"
+    local VAR_DOTENV="DOTENV_${VAR}"
+    local VAR_DOTENV_FILE="DOTENV_${VAR_FILE}"
+    local VALUE=""
+
+    if [[ -n "${!VAR:-}" ]]; then
+        VALUE="${!VAR}"
+    elif [[ -n "${!VAR_FILE:-}" ]]; then
+        VALUE="$(cat "${!VAR_FILE}")"
+    elif [[ -n "${!VAR_DOTENV_FILE:-}" ]]; then
+        VALUE="$(cat "${!VAR_DOTENV_FILE}")"
+    elif [[ -n "${!VAR_DOTENV:-}" ]]; then
+        VALUE="${!VAR_DOTENV}"
+    fi
+
+    export "${VAR}=${VALUE}"
+}
+
+function color() {
+    case $1 in
+        red)     echo -e "\033[31m$2\033[0m" ;;
+        green)   echo -e "\033[32m$2\033[0m" ;;
+        yellow)  echo -e "\033[33m$2\033[0m" ;;
+        blue)    echo -e "\033[34m$2\033[0m" ;;
+        none)    echo "$2" ;;
+    esac
+}
+
+function init_env_dir() {
+    # DATA_DIR
+    get_env DATA_DIR
+    DATA_DIR="${DATA_DIR:-"/bitwarden/data"}"
+
+    # DATA_DB
+    get_env DATA_DB
+    DATA_DB="${DATA_DB:-"${DATA_DIR}/db.sqlite3"}"
+
+    # DATA_CONFIG
+    DATA_CONFIG="${DATA_DIR}/config.json"
+
+    # DATA_RSAKEY
+    get_env DATA_RSAKEY
+    DATA_RSAKEY="${DATA_RSAKEY:-"${DATA_DIR}/rsa_key"}"
+    DATA_RSAKEY_DIRNAME="$(dirname "${DATA_RSAKEY}")"
+    DATA_RSAKEY_BASENAME="$(basename "${DATA_RSAKEY}")"
+
+    # DATA_ATTACHMENTS
+    get_env DATA_ATTACHMENTS
+    DATA_ATTACHMENTS="$(dirname "${DATA_ATTACHMENTS:-"${DATA_DIR}/attachments"}/useless")"
+    DATA_ATTACHMENTS_DIRNAME="$(dirname "${DATA_ATTACHMENTS}")"
+    DATA_ATTACHMENTS_BASENAME="$(basename "${DATA_ATTACHMENTS}")"
+
+    # DATA_SEND
+    get_env DATA_SENDS
+    DATA_SENDS="$(dirname "${DATA_SENDS:-"${DATA_DIR}/sends"}/useless")"
+    DATA_SENDS_DIRNAME="$(dirname "${DATA_SENDS}")"
+    DATA_SENDS_BASENAME="$(basename "${DATA_SENDS}")"
+}
+
+function clear_dir() {
+    rm -rf "/bitwarden/backup"
+}
+
+function backup_init() {
+    
+    # backup vaultwarden database file
+    BACKUP_FILE_DB="/bitwarden/backup/db.sqlite3"
+    # backup vaultwarden config file
+    BACKUP_FILE_CONFIG="/bitwarden/backup/config.json"
+    # backup vaultwarden rsakey files
+    BACKUP_FILE_RSAKEY="/bitwarden/backup/rsakey.tar"
+    # backup vaultwarden attachments directory
+    BACKUP_FILE_ATTACHMENTS="/bitwarden/backup/attachments.tar"
+    # backup vaultwarden sends directory
+    BACKUP_FILE_SENDS="/bitwarden/backup/sends.tar"
+    # backup zip file
+    BACKUP_FILE_ZIP="/bitwarden/backup/backup.zip"
+}
+
+function backup_db() {
+    color blue "backup vaultwarden sqlite database"
+
+    if [[ -f "${DATA_DB}" ]]; then
+        sqlite3 "${DATA_DB}" ".backup '${BACKUP_FILE_DB}'"
+    else
+        color yellow "not found vaultwarden sqlite database, skipping"
+    fi
+}
+
+function backup_config() {
+    color blue "backup vaultwarden config"
+
+    if [[ -f "${DATA_CONFIG}" ]]; then
+        cp -f "${DATA_CONFIG}" "${BACKUP_FILE_CONFIG}"
+    else
+        color yellow "not found vaultwarden config, skipping"
+    fi
+}
+
+function backup_rsakey() {
+    color blue "backup vaultwarden rsakey"
+
+    local FIND_RSAKEY=$(find "${DATA_RSAKEY_DIRNAME}" -name "${DATA_RSAKEY_BASENAME}*" | xargs -I {} basename {})
+    local FIND_RSAKEY_COUNT=$(echo "${FIND_RSAKEY}" | wc -l)
+
+    if [[ "${FIND_RSAKEY_COUNT}" -gt 0 ]]; then
+        echo "${FIND_RSAKEY}" | tar -c -C "${DATA_RSAKEY_DIRNAME}" -f "${BACKUP_FILE_RSAKEY}" -T -
+
+        color blue "display rsakey tar file list"
+
+        tar -tf "${BACKUP_FILE_RSAKEY}"
+    else
+        color yellow "not found vaultwarden rsakey, skipping"
+    fi
+}
+
+function backup_attachments() {
+    color blue "backup vaultwarden attachments"
+
+    if [[ -d "${DATA_ATTACHMENTS}" ]]; then
+        tar -c -C "${DATA_ATTACHMENTS_DIRNAME}" -f "${BACKUP_FILE_ATTACHMENTS}" "${DATA_ATTACHMENTS_BASENAME}"
+
+        color blue "display attachments tar file list"
+
+        tar -tf "${BACKUP_FILE_ATTACHMENTS}"
+    else
+        color yellow "not found vaultwarden attachments directory, skipping"
+    fi
+}
+
+function backup_sends() {
+    color blue "backup vaultwarden sends"
+
+    if [[ -d "${DATA_SENDS}" ]]; then
+        tar -c -C "${DATA_SENDS_DIRNAME}" -f "${BACKUP_FILE_SENDS}" "${DATA_SENDS_BASENAME}"
+
+        color blue "display sends tar file list"
+
+        tar -tf "${BACKUP_FILE_SENDS}"
+    else
+        color yellow "not found vaultwarden sends directory, skipping"
+    fi
+}
+
+function backup() {
+    mkdir -p /bitwarden/backup
+    backup_db
+    backup_config
+    backup_rsakey
+    backup_attachments
+    backup_sends
+    ls -lah /bitwarden/backup
+}
+
+function backup_package() {
+    color blue "package backup file"
+    UPLOAD_FILE="${BACKUP_FILE_ZIP}"
+    echo "$(date "+%Y-%m-%d %H:%M:%S")" > /bitwarden/backup/backup_time.txt
+    pg_dump ${DATABASE_URL} -F c -b -v -f "/bitwarden/backup/pgsql.backup" >/dev/null 2>&1
+    zip -q -r -P "${ZIP_PASSWORD}" "${BACKUP_FILE_ZIP}" /bitwarden/backup/*
+    ls -lah "/bitwarden/backup"
+    color blue "display backup ZIP_PASSWORD file list"
+}
+
+function upload() {
+    curl --user ${WEBDAV_PASSWD1} -T ${BACKUP_FILE_ZIP} ${WEBDAV_LINK1}
+    curl --user ${WEBDAV_PASSWD2} -T ${BACKUP_FILE_ZIP} ${WEBDAV_LINK2}
+}
+
+
+init_env_dir
+clear_dir
+backup_init
+backup
+backup_package
+upload
+clear_dir

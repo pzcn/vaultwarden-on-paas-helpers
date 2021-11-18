@@ -4,12 +4,13 @@
 FROM vaultwarden/server:alpine
 
 COPY vaultwarden-startup /usr/bin/vaultwarden-startup
+COPY backup /usr/bin/vaultwarden-backup
 
 ENV PORT 3000
 EXPOSE 3000
 
 ## because vaultwarden-startup requires bash, so we install that
-RUN apk add bash coreutils \
+RUN apk add bash coreutils zip postgresql \
     # Just in case we're still calling the old stuff
     && ln -s /usr/bin/vaultwarden-startup /usr/bin/bwrs-startup
 

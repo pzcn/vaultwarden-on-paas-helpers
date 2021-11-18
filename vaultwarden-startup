@@ -1,4 +1,6 @@
 #!/bin/bash
+ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+echo "Asia/Shanghai" > /etc/timezone
 
 if [[ "${MAKE_IT_FAIL}" == "true" ]]; then
    echo "error: MAKE_IT_FAIL is defined, aborting..."
@@ -72,6 +74,9 @@ if [[ -z "${DATABASE_URL}" ]]; then
   echo "error: DATABASE_URL is undefined, thus the server will not start. To continue, add an DATABASE_URL secret on your PaaS service."
   echo "error: If you're running locally,  ease setup an Postgres instance"
   exit 1
+else
+  echo "0 3 * * * bash /usr/bin/vaultwarden-backup" >> /etc/crontabs/root
+  crond -l 2 -f > /dev/stdout 2> /dev/stderr &
 fi
 
 echo "==> Checks done, starting up..."
